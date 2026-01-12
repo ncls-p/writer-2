@@ -1,28 +1,21 @@
-import { db } from "@/lib/db";
-import type {
-  ProcessingStatus,
-  ProcessingStep,
-  UploadProgress,
-} from "../../domain/types";
+import { ProcessingStatus, ProcessingStep } from "../../domain/types";
+import type { UploadProgress } from "../../domain/types";
+import type { DataSourceRepository } from "../ports/datasource-repository.port";
 
-interface GetProcessingStatusInput {
+export interface GetProcessingStatusInput {
   dataSourceId: string;
 }
 
+/**
+ * Retrieves the processing status for a data source.
+ */
 export async function getProcessingStatus(
   input: GetProcessingStatusInput,
+  dataSourceRepo: DataSourceRepository,
 ): Promise<UploadProgress | null> {
   const { dataSourceId } = input;
 
-  const dataSource = await db.dataSource.findUnique({
-    where: { id: dataSourceId },
-    select: {
-      id: true,
-      status: true,
-      progress: true,
-      errorMessage: true,
-    },
-  });
+  const dataSource = await dataSourceRepo.findById(dataSourceId);
 
   if (!dataSource) {
     return null;
@@ -31,8 +24,8 @@ export async function getProcessingStatus(
   return {
     dataSourceId: dataSource.id,
     progress: dataSource.progress,
-    status: dataSource.status as ProcessingStatus,
-    step: "completed" as ProcessingStep,
-    errorMessage: dataSource.errorMessage || undefined,
+    status: dataSource.status,
+    step: ProcessingStep.COMPLETED,
+    errorMessage: dataSource.errorMessage ?? undefined,
   };
 }

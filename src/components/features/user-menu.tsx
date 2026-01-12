@@ -12,9 +12,11 @@ import {
 import { signOut, useSession } from "@/lib/auth-client";
 import { getInitials } from "@/lib/utils";
 import { LogOut, Settings, User } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 export function UserMenu() {
   const { data: session } = useSession();
+  const router = useRouter();
 
   if (!session?.user) {
     return null;
@@ -24,7 +26,7 @@ export function UserMenu() {
 
   const handleLogout = async () => {
     await signOut();
-    window.location.href = "/login";
+    router.push("/login");
   };
 
   return (
