@@ -1,0 +1,287 @@
+# Production Docker Compose for Writer
+# Optimized, secure, with health checks and persistence
+
+services:
+    # Next.js Application (Production Mode)
+    app:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+            target: runner
+        container_name: writer-app-prod
+        restart: always
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            qdrant:
+                condition: service_healthy
+            tika:
+                condition: service_healthy
+            minio:
+                condition: service_healthy
+        environment:
+            # Database
+            DATABASE_URL: postgresql://${POSTGRES_USER:-writer}:${POSTGRES_PASSWORD:-change-me-in-production}@postgres:5432/${POSTGRES_DB:-writer}
+
+            # Redis (with password)
+            REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-in-production}@redis:6379
+
+            # Qdrant (with API key)
+            QDRANT_URL: http://qdrant:6333
+            QDRANT_GRPC_URL: http://qdrant:6334
+            QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+
+            # Tika
+            TIKA_URL: http://tika:9998
+
+            # MinIO
+            MINIO_ENDPOINT: minio
+            MINIO_PORT: 9000
+            MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+            MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me-in-production}
+            MINIO_BUCKET: ${MINIO_BUCKET:-writer-uploads}
+            MINIO_USE_SSL: "false"
+
+            # App
+            NODE_ENV: production
+            PORT: 3000
+
+            # LLM
+            OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+            ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+            # Auth
+            BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+
+            # Data residency
+            DATA_REGION: ${DATA_REGION:-EU}
+
+        ports:
+            - "3000:3000"
+        deploy:
+            resources:
+                limits:
+                    cpus: "2"
+                    memory: 2G
+                reservations:
+                    cpus: "0.5"
+                    memory: 512M
+            restart_policy:
+                condition: on-failure
+                delay: 5s
+                max_attempts: 3
+                window: 120s
+        healthcheck:
+            test:
+                [
+                    "CMD",
+                    "wget",
+                    "--no-verbose",
+                    "--tries=1",
+                    "--spider",
+                    "http://localhost:3000/api/health",
+                ]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 40s
+        networks:
+            - writer-network
+
+    # PostgreSQL 17 Database
+    postgres:
+        image: postgres:17-alpine
+        container_name: writer-postgres-prod
+        restart: always
+        environment:
+            POSTGRES_DB: ${POSTGRES_DB:-writer}
+            POSTGRES_USER: ${POSTGRES_USER:-writer}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-production}
+            PGDATA: /var/lib/postgresql/data/pgdata
+        ports:
+            - "5432:5432"
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+            - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready -U ${POSTGRES_USER:-writer} -d ${POSTGRES_DB:-writer}",
+                ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+        deploy:
+            resources:
+                limits:
+                    cpus: "1"
+                    memory: 1G
+                reservations:
+                    cpus: "0.5"
+                    memory: 512M
+        networks:
+            - writer-network
+
+    # Redis 7 (with password)
+    redis:
+        image: redis:7-alpine
+        container_name: writer-redis-prod
+        restart: always
+        command: >
+            redis-server
+            --requirepass ${REDIS_PASSWORD:-change-me-in-production}
+            --maxmemory 256mb
+            --maxmemory-policy allkeys-lru
+            --appendonly yes
+            --save 60 1000
+        ports:
+            - "6379:6379"
+        volumes:
+            - redis_data:/data
+        healthcheck:
+            test:
+                [
+                    "CMD",
+                    "redis-cli",
+                    "-a",
+                    "${REDIS_PASSWORD:-change-me-in-production}",
+                    "ping",
+                ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        deploy:
+            resources:
+                limits:
+                    cpus: "0.5"
+                    memory: 256M
+                reservations:
+                    cpus: "0.25"
+                    memory: 128M
+        networks:
+            - writer-network
+
+    # Qdrant Vector Database (with API key)
+    qdrant:
+        image: qdrant/qdrant:latest
+        container_name: writer-qdrant-prod
+        restart: always
+        environment:
+            QDRANT__SERVICE__GRPC_PORT: 6334
+            QDRANT__SERVICE__HTTP_PORT: 6333
+            QDRANT__LOG_LEVEL: INFO
+            QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+        ports:
+            - "6333:6333"
+            - "6334:6334"
+        volumes:
+            - qdrant_data:/qdrant/storage
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+            start_period: 30s
+        deploy:
+            resources:
+                limits:
+                    cpus: "2"
+                    memory: 4G
+                reservations:
+                    cpus: "0.5"
+                    memory: 1G
+        networks:
+            - writer-network
+
+    # Apache Tika (Document Parser)
+    tika:
+        image: apache/tika:latest-full
+        container_name: writer-tika-prod
+        restart: always
+        ports:
+            - "9998:9998"
+        environment:
+            TIKA_SERVER_MIN_HEAP: 512m
+            TIKA_SERVER_MAX_HEAP: 1g
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:9998/status"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+        deploy:
+            resources:
+                limits:
+                    cpus: "1"
+                    memory: 1G
+                reservations:
+                    cpus: "0.25"
+                    memory: 256M
+        networks:
+            - writer-network
+
+    # MinIO (S3-compatible storage)
+    minio:
+        image: minio/minio:latest
+        container_name: writer-minio-prod
+        restart: always
+        command: server /data --console-address ":9001"
+        environment:
+            MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+            MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-in-production}
+        ports:
+            - "9000:9000"
+            - "9001:9001"
+        volumes:
+            - minio_data:/data
+        healthcheck:
+            test:
+                ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+        deploy:
+            resources:
+                limits:
+                    cpus: "1"
+                    memory: 512M
+                reservations:
+                    cpus: "0.25"
+                    memory: 128M
+        networks:
+            - writer-network
+
+    # MinIO Setup (Create initial bucket)
+    minio-setup:
+        image: minio/mc:latest
+        container_name: writer-minio-setup-prod
+        depends_on:
+            minio:
+                condition: service_healthy
+        entrypoint: >
+            /bin/sh -c "
+            sleep 10 &&
+            mc alias set minio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-change-me-in-production} &&
+            mc mb minio/${MINIO_BUCKET:-writer-uploads} --ignore-existing &&
+            mc anonymous set download minio/${MINIO_BUCKET:-writer-uploads} &&
+            echo 'MinIO setup completed'
+            "
+        networks:
+            - writer-network
+
+volumes:
+    postgres_data:
+        driver: local
+    redis_data:
+        driver: local
+    qdrant_data:
+        driver: local
+    minio_data:
+        driver: local
+
+networks:
+    writer-network:
+        driver: bridge

@@ -1,0 +1,108 @@
+generator client {
+    provider = "prisma-client"
+    output   = "./generated/prisma"
+}
+
+datasource db {
+    provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
+  dataSources   DataSource[]
+}
+
+model Session {
+    id        String   @id @default(cuid())
+    userId    String
+    token     String   @unique
+    expiresAt DateTime
+    ipAddress String?
+    userAgent String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("sessions")
+}
+
+model Account {
+    id                    String    @id @default(cuid())
+    userId                String
+    accountId             String
+    providerId            String
+    accessToken           String?
+    refreshToken          String?
+    accessTokenExpiresAt  DateTime?
+    refreshTokenExpiresAt DateTime?
+    scope                 String?
+    password              String?
+    createdAt             DateTime  @default(now())
+    updatedAt             DateTime  @updatedAt
+    user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verifications")
+}
+
+model DataSource {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  type        String   @default("file")
+  status      String   @default("pending")
+
+  fileKey     String?
+  fileName    String?
+  fileSize    Int?
+  mimeType    String?
+
+  progress    Int      @default(0)
+  errorMessage String?
+
+  documentCount Int    @default(0)
+  chunkCount    Int    @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents   Document[]
+
+  @@map("data_sources")
+}
+
+model Document {
+  id            String   @id @default(cuid())
+  dataSourceId  String
+
+  title         String?
+  content       String   @db.Text
+
+  chunkCount    Int      @default(0)
+
+  createdAt     DateTime @default(now())
+
+  dataSource    DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+
+  @@map("documents")
+}
